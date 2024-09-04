@@ -100,6 +100,14 @@ export function removeKeysFromQuery({
 }
 
 export const handleError = (error: unknown) => {
-	console.error(error)
-	throw new Error(typeof error === 'string' ? error : JSON.stringify(error))
+	console.error('An error occurred:', error)
+
+	// Provide more context or custom error handling as needed
+	if (error instanceof Error) {
+		// If it's an instance of Error, return its message
+		throw new Error(error.message)
+	} else {
+		// If it's not an instance of Error, convert it to a string
+		throw new Error('An unknown error occurred')
+	}
 }
