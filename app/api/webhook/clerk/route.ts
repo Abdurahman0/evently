@@ -31,7 +31,7 @@ export async function POST(req: Request) {
 
 	// If there are no headers, error out
 	if (!svix_id || !svix_timestamp || !svix_signature) {
-		return new Response('Error occured -- no svix headers', {
+		return new Response('Error occurred -- no svix headers', {
 			status: 400,
 		})
 	}
@@ -54,7 +54,7 @@ export async function POST(req: Request) {
 		}) as WebhookEvent
 	} catch (err) {
 		console.error('Error verifying webhook:', err)
-		return new Response('Error occured', {
+		return new Response('Error occurred', {
 			status: 400,
 		})
 	}
@@ -106,11 +106,27 @@ export async function POST(req: Request) {
 		}
 
 		if (eventType === 'user.updated') {
-			// Handle user.update logic
+			try {
+				// Handle user.update logic
+			} catch (error) {
+				console.error('Error updating user:', error)
+				return new Response('Error updating user', {
+					status: 500,
+				})
+			}
 		}
 
 		if (eventType === 'user.deleted') {
-			// Handle user.deleted logic
+			try {
+				const { id } = evt.data
+				const deletedUser = await deleteUser(id)
+				return NextResponse.json({ message: 'OK', user: deletedUser })
+			} catch (error) {
+				console.error('Error deleting user:', error)
+				return new Response('Error deleting user', {
+					status: 500,
+				})
+			}
 		}
 	} else {
 		return new Response('Invalid user data', {
