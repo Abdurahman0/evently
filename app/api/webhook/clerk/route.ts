@@ -4,6 +4,16 @@ import { clerkClient, WebhookEvent } from '@clerk/nextjs/server'
 import { createUser, deleteUser, updateUser } from '@/lib/actions/user.actions'
 import { NextResponse } from 'next/server'
 
+// Define a type for user data
+interface UserData {
+	id: string
+	email_addresses: { email_address: string }[]
+	image_url?: string
+	first_name?: string
+	last_name?: string
+	username?: string
+}
+
 export async function POST(req: Request) {
 	const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET
 
@@ -49,32 +59,22 @@ export async function POST(req: Request) {
 		})
 	}
 
-	// Type guard to ensure evt.data has the properties we need
-	const isUserEvent = (
-		data: any
-	): data is {
-		id: string
-		email_addresses: { email_address: string }[]
-		image_url?: string
-		first_name?: string
-		last_name?: string
-		username?: string
-	} => {
+	// Check if evt.data matches the UserData interface
+	const isUserEvent = (data: any): data is UserData => {
 		return (
 			data &&
 			typeof data.id === 'string' &&
 			Array.isArray(data.email_addresses) &&
-			data.email_addresses[0]?.email_address === 'string'
+			typeof data.email_addresses[0]?.email_address === 'string'
 		)
 	}
 
-	// Handle the webhook events
-	const { id, email_addresses, image_url, first_name, last_name, username } =
-		evt.data
-	const eventType = evt.type
+	if (isUserEvent(evt.data)) {
+		const { id, email_addresses, image_url, first_name, last_name, username } =
+			evt.data
+		const eventType = evt.type
 
-	if (eventType === 'user.created') {
-		if (isUserEvent(evt.data)) {
+		if (eventType === 'user.created') {
 			const user = {
 				clerkId: id,
 				email: email_addresses[0].email_address,
@@ -103,19 +103,19 @@ export async function POST(req: Request) {
 					status: 500,
 				})
 			}
-		} else {
-			return new Response('Invalid user data', {
-				status: 400,
-			})
 		}
-	}
 
-	if (eventType === 'user.updated') {
-		// Handle user.update logic
-	}
+		if (eventType === 'user.updated') {
+			// Handle user.update logic
+		}
 
-	if (eventType === 'user.deleted') {
-		// Handle user.deleted logic
+		if (eventType === 'user.deleted') {
+			// Handle user.deleted logic
+		}
+	} else {
+		return new Response('Invalid user data', {
+			status: 400,
+		})
 	}
 
 	return new Response('', { status: 200 })
