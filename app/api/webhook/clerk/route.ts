@@ -1,51 +1,41 @@
+'use server'
+
 import { Webhook } from 'svix'
 import { headers } from 'next/headers'
 import { clerkClient, WebhookEvent } from '@clerk/nextjs/server'
 import { createUser, deleteUser, updateUser } from '@/lib/actions/user.actions'
 import { NextResponse } from 'next/server'
 
-// Define a type for user data
-interface UserData {
-	id: string
-	email_addresses: { email_address: string }[]
-	image_url?: string
-	first_name?: string
-	last_name?: string
-	username?: string
+// Ensure WEBHOOK_SECRET is present
+const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET
+
+if (!WEBHOOK_SECRET) {
+	throw new Error(
+		'Please add WEBHOOK_SECRET from Clerk Dashboard to .env or .env.local'
+	)
 }
 
 export async function POST(req: Request) {
-	const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET
-
-	if (!WEBHOOK_SECRET) {
-		throw new Error(
-			'Please add WEBHOOK_SECRET from Clerk Dashboard to .env or .env.local'
-		)
-	}
-
-	// Get the headers
+	// Get headers
 	const headerPayload = headers()
 	const svix_id = headerPayload.get('svix-id')
 	const svix_timestamp = headerPayload.get('svix-timestamp')
 	const svix_signature = headerPayload.get('svix-signature')
 
-	// If there are no headers, error out
+	// Validate headers
 	if (!svix_id || !svix_timestamp || !svix_signature) {
-		return new Response('Error occurred -- no svix headers', {
-			status: 400,
-		})
+		return new Response('Error: Missing Svix headers', { status: 400 })
 	}
 
-	// Get the body
+	// Get and parse the body
 	const payload = await req.json()
 	const body = JSON.stringify(payload)
 
-	// Create a new Svix instance with your secret.
-	const wh = new Webhook(WEBHOOK_SECRET)
+	// Verify webhook payload
+	const wh = new Webhook(WEBHOOK_SECRET!)
 
 	let evt: WebhookEvent
 
-	// Verify the payload with the headers
 	try {
 		evt = wh.verify(body, {
 			'svix-id': svix_id,
@@ -54,85 +44,86 @@ export async function POST(req: Request) {
 		}) as WebhookEvent
 	} catch (err) {
 		console.error('Error verifying webhook:', err)
-		return new Response('Error occurred', {
-			status: 400,
-		})
+		return new Response('Error: Invalid signature', { status: 400 })
 	}
 
-	// Check if evt.data matches the UserData interface
-	const isUserEvent = (data: any): data is UserData => {
-		return (
-			data &&
-			typeof data.id === 'string' &&
-			Array.isArray(data.email_addresses) &&
-			typeof data.email_addresses[0]?.email_address === 'string'
-		)
-	}
+	// Handle different event types
+	const { type: eventType, data } = evt
+	let response
 
-	if (isUserEvent(evt.data)) {
-		const { id, email_addresses, image_url, first_name, last_name, username } =
-			evt.data
-		const eventType = evt.type
-
-		if (eventType === 'user.created') {
-			const user = {
-				clerkId: id,
-				email: email_addresses[0].email_address,
-				username: username || '', // Provide a default value
-				firstName: first_name || '', // Provide a default value
-				lastName: last_name || '', // Provide a default value
-				photo: image_url || '', // Provide a default value
-			}
-
+	switch (eventType) {
+		case 'user.created':
 			try {
+				const {
+					id,
+					email_addresses,
+					image_url,
+					first_name,
+					last_name,
+					username,
+				} = data
+				const user = {
+					clerkId: id,
+					email: email_addresses[0]?.email_address || '',
+					username: username || '',
+					firstName: first_name || '',
+					lastName: last_name || '',
+					photo: image_url || '',
+				}
+
+				console.log('Creating user with data:', user)
 				const newUser = await createUser(user)
-				console.log('New user created:', newUser)
 
 				if (newUser) {
 					await clerkClient.users.updateUserMetadata(id, {
-						publicMetadata: {
-							userId: newUser._id,
-						},
+						publicMetadata: { userId: newUser._id },
 					})
+					console.log('New user created:', newUser)
+					response = NextResponse.json({ message: 'OK', user: newUser })
+				} else {
+					response = new Response('Error creating user', { status: 500 })
+				}
+			} catch (err) {
+				console.error('Error handling user.created event:', err)
+				response = new Response('Error creating user', { status: 500 })
+			}
+			break
+
+		case 'user.updated':
+			try {
+				const { id, image_url, first_name, last_name, username } = data
+				const user = {
+					firstName: first_name || '',
+					lastName: last_name || '',
+					username: username || '',
+					photo: image_url || '',
 				}
 
-				return NextResponse.json({ message: 'OK', user: newUser })
-			} catch (error) {
-				console.error('Error creating user:', error)
-				return new Response('Error creating user', {
-					status: 500,
-				})
+				console.log('Updating user with data:', user)
+				const updatedUser = await updateUser(id, user)
+				console.log('User updated:', updatedUser)
+				response = NextResponse.json({ message: 'OK', user: updatedUser })
+			} catch (err) {
+				console.error('Error handling user.updated event:', err)
+				response = new Response('Error updating user', { status: 500 })
 			}
-		}
+			break
 
-		if (eventType === 'user.updated') {
+		case 'user.deleted':
 			try {
-				// Handle user.update logic
-			} catch (error) {
-				console.error('Error updating user:', error)
-				return new Response('Error updating user', {
-					status: 500,
-				})
+				const { id } = data
+				const deletedUser = await deleteUser(id!)
+				console.log('User deleted:', deletedUser)
+				response = NextResponse.json({ message: 'OK', user: deletedUser })
+			} catch (err) {
+				console.error('Error handling user.deleted event:', err)
+				response = new Response('Error deleting user', { status: 500 })
 			}
-		}
+			break
 
-		if (eventType === 'user.deleted') {
-			try {
-				const { id } = evt.data
-				const deletedUser = await deleteUser(id)
-				return NextResponse.json({ message: 'OK', user: deletedUser })
-			} catch (error) {
-				console.error('Error deleting user:', error)
-				return new Response('Error deleting user', {
-					status: 500,
-				})
-			}
-		}
-	} else {
-		return new Response('Invalid user data', {
-			status: 400,
-		})
+		default:
+			response = new Response('Event type not handled', { status: 400 })
 	}
 
-	return new Response('', { status: 200 })
+	return response
 }
